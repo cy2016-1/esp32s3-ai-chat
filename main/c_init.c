@@ -116,8 +116,6 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
                 break;
             case INPUT_KEY_USER_ID_VOLUP:
                 ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
-                extern void testTTS(void);
-                testTTS();
                 break;
             case INPUT_KEY_USER_ID_VOLDOWN:
                 ESP_LOGI(TAG, "[ * ] [Vol-] input key event");

@@ -24,15 +24,9 @@
 #include "common.h"
 #include "c_init.h"
 #include "c_wifi_setting.h"
-#include "c_offline.h"
-#include "c_clock_http.h"
 #include "c_http.h"
 #include "c_audio.h"
 #include "c_vad.h"
-
-TaskHandle_t offline_task_handle = NULL;
-
-EventGroupHandle_t offline_event_group;
 
 void app_main(void)
 {
@@ -41,29 +35,9 @@ void app_main(void)
     wifi_init();
     gpio_init();
 
-    if(system_mode)
-    {
-        gpio_set_level(GPIO_OUTPUT_IO_0, 1);
-        offline_event_group = xEventGroupCreate();
-        xEventGroupSetBits(offline_event_group, OFFLINE_RUN_BIT);
-        xTaskCreate(offline_control, "offline_control", 1024*4, NULL, 4, &offline_task_handle);
-    }
-    else
-    {
-        gpio_set_level(GPIO_OUTPUT_IO_0, 0);
-        peripherals_init();
-        baidu_get_token();
-        process_task_start();
-        vad_start();
-        //create_wenxin_request("你好");
-
-        // get_music_list();
-        // vTaskDelay(1000 / portTICK_PERIOD_MS);
-        // get_music_url();
-        // vTaskDelay(1000 / portTICK_PERIOD_MS);
-        // xTaskCreate(http_mp3_play, "http_music", 1024*4, &music_url, 5, &http_mp3_task_handle);
-    }
-    // xTaskCreate(esp_receive_broadcast, "broadcast_task", 1024*4, NULL, 5, NULL);
-    // xTaskCreate(notice, "notice_task", 1024*4, NULL, 5, NULL);
-    // esp_start_webserver();
+    gpio_set_level(GPIO_OUTPUT_IO_0, 0);
+    peripherals_init();
+    baidu_get_token();
+    process_task_start();
+    vad_start();
 }
