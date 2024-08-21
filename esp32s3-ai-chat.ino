@@ -7,34 +7,39 @@
 // I2S config for MAX98357A
 #define I2S_OUT_PORT I2S_NUM_0
 #define I2S_OUT_BCLK 16
-#define I2S_OUT_LRC  17
-#define I2S_OUT_DOUT 15 
+#define I2S_OUT_LRC 17
+#define I2S_OUT_DOUT 15
 
 // INMP441 config
 #define I2S_IN_PORT I2S_NUM_1
-#define I2S_IN_BCLK  4
-#define I2S_IN_LRC   5
-#define I2S_IN_DIN   6 
+#define I2S_IN_BCLK 4
+#define I2S_IN_LRC 5
+#define I2S_IN_DIN 6
 
 // WiFi credentials
-const char* ssid = "chging";
-const char* password = "1993@Chg";
+static const char* ssid = "H3C1";
+static const char* password = "bjlg2023";
 
 // Baidu API credentials
-const char* baidu_api_key = "mnCVxgi8S8fLfIldPeNUewAq";
-const char* baidu_secret_key = "x0xcBGyUA7NTxzw7wEJyEz9uqmXMbxTd";
-const char* stt_api_url = "https://vop.baidu.com/server_api"; // 语音识别API
-const char* ernie_api_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions?access_token=24.65653adcb3499e58af63696c38942878.2592000.1726763505.282335-95595183"; // 千帆大模型API
-const char* tts_api_url = "https://tts.baidu.com/restapi2/v1/tts"; // 语音合成API
+static const char* baidu_api_key = "mnCVxgi8S8fLfIldPeNUewAq";
+static const char* baidu_secret_key = "x0xcBGyUA7NTxzw7wEJyEz9uqmXMbxTd";
+
+// Baidu 千帆大模型
+static char* qianfan_api_key = "Lb7o26wf56OZRO1r1ht5qpDV";
+static char* qianfan_secret_key = "YVlGevejLEQOy477sfW1BdC8wzidvET8";
+
+static const char* stt_api_url = "https://vop.baidu.com/server_api";                                                                 // 语音识别API
+static const char* ernie_api_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/ernie-lite-8k?access_token=";  // 千帆大模型API
+static const char* tts_api_url = "https://tsn.baidu.com/text2audio";                                                                 // 语音合成API
 
 // Audio recording settings
-const int sampleRate = 16000;
-const int bufferSize = 1024;
-uint8_t audioBuffer[bufferSize];
+static const int sampleRate = 16000;
+static const int bufferSize = 4096;
+static int16_t audioBuffer[bufferSize];
 
 // Function prototypes
-String getAccessToken();
-String speechToText(uint8_t* audioData, size_t audioDataSize);
+String getAccessToken(const char* api_key, const char* secret_key);
+String speechToText(int16_t* audioData, size_t audioDataSize);
 String getErnieBotResponse(String prompt);
 String textToSpeech(String text);
 void playAudio(uint8_t* audioData, size_t audioDataSize);
@@ -57,7 +62,7 @@ void setup() {
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
     .communication_format = (i2s_comm_format_t)(I2S_COMM_FORMAT_STAND_I2S),
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, 
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
     .dma_buf_len = 1024,
     .use_apll = false
@@ -66,7 +71,7 @@ void setup() {
     .bck_io_num = I2S_OUT_BCLK,
     .ws_io_num = I2S_OUT_LRC,
     .data_out_num = I2S_OUT_DOUT,
-    .data_in_num = -1 
+    .data_in_num = -1
   };
   i2s_driver_install(I2S_OUT_PORT, &i2s_config_out, 0, NULL);
   i2s_set_pin(I2S_OUT_PORT, &pin_config);
@@ -75,7 +80,7 @@ void setup() {
   i2s_config_t i2s_config_in = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = sampleRate,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT, // 注意：INMP441 输出 32 位数据
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,  // 注意：INMP441 输出 32 位数据
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
@@ -95,39 +100,37 @@ void setup() {
 
 void loop() {
   // Record audio from INMP441
-  size_t bytesRead;
-  i2s_read(I2S_IN_PORT, (char*)audioBuffer, bufferSize, &bytesRead, portMAX_DELAY);
-  
-  // Convert 32-bit audio data to 16-bit
-  int16_t audioBuffer16[bufferSize / 2];
-  for (int i = 0; i < bufferSize / 4; i++) {
-    audioBuffer16[i] = (int16_t)audioBuffer[i * 4 + 2] << 8 | audioBuffer[i * 4 + 3]; // 取高 16 位
+  size_t bytesRead = 0;
+  i2s_read(I2S_IN_PORT, audioBuffer, bufferSize, &bytesRead, portMAX_DELAY);
+  Serial.println(bytesRead);
+  if (bytesRead > 0) {
+    // Perform speech to text
+    String recognizedText = speechToText(audioBuffer, bufferSize);
+    Serial.println("Recognized text: " + recognizedText);
+
+    // Get response from Ernie Bot
+    String ernieResponse = getErnieBotResponse("你好，讲个小故事，50字以内");
+    Serial.println("Ernie Bot response: " + ernieResponse);
+
+    // Perform text to speech
+    String synthesizedAudio = textToSpeech(ernieResponse);
+
+    // Play audio via MAX98357A
+    playAudio((uint8_t*)synthesizedAudio.c_str(), synthesizedAudio.length());
   }
 
-  // Perform speech to text
-  String recognizedText = speechToText((uint8_t*)audioBuffer16, bufferSize / 2);
-  Serial.println("Recognized text: " + recognizedText);
-
-  // Get response from Ernie Bot
-  String ernieResponse = getErnieBotResponse(recognizedText);
-  Serial.println("Ernie Bot response: " + ernieResponse);
-
-  // Perform text to speech
-  String synthesizedAudio = textToSpeech(ernieResponse);
-
-  // Play audio via MAX98357A
-  playAudio((uint8_t*)synthesizedAudio.c_str(), synthesizedAudio.length());
-
-  delay(100);
+  delay(1000);
 }
 
-// Baidu API access token (全局变量)
-String access_token = "";
+String baidu_access_token = "";
+String qianfan_access_token = "";
 
 // Get Baidu API access token
-String getAccessToken() {
+String getAccessToken(const char* api_key, const char* secret_key) {
+  String access_token = "";
   HTTPClient http;
-  http.begin("https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" + String(baidu_api_key) + "&client_secret=" + String(baidu_secret_key));
+
+  http.begin("https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" + String(api_key) + "&client_secret=" + String(secret_key));
   int httpCode = http.POST("");
 
   if (httpCode == HTTP_CODE_OK) {
@@ -135,6 +138,8 @@ String getAccessToken() {
     DynamicJsonDocument doc(1024);
     deserializeJson(doc, response);
     access_token = doc["access_token"].as<String>();
+
+    Serial.printf("[HTTP] GET access_token: %s\n", access_token);
   } else {
     Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
@@ -144,9 +149,9 @@ String getAccessToken() {
 }
 
 // Perform speech to text using Baidu STT API
-String speechToText(uint8_t* audioData, size_t audioDataSize) {
-  if (access_token == "") {
-    getAccessToken();
+String speechToText(int16_t* audioData, size_t audioDataSize) {
+  if (baidu_access_token == "") {
+    baidu_access_token = getAccessToken(baidu_api_key, baidu_secret_key);
   }
 
   HTTPClient http;
@@ -154,7 +159,7 @@ String speechToText(uint8_t* audioData, size_t audioDataSize) {
   http.addHeader("Content-Type", "application/json");
 
   // Base64 encode audio data
-  String base64AudioData = base64::encode(audioData, audioDataSize);
+  String base64AudioData = base64::encode((uint8_t*)audioData, audioDataSize * 2);
 
   // Construct JSON request body
   DynamicJsonDocument doc(2048);
@@ -162,10 +167,10 @@ String speechToText(uint8_t* audioData, size_t audioDataSize) {
   doc["rate"] = sampleRate;
   doc["channel"] = 1;
   doc["cuid"] = "ESP32-S3";
-  doc["token"] = access_token;
+  doc["token"] = baidu_access_token;
   doc["lan"] = "zh";
   doc["speech"] = base64AudioData;
-  doc["len"] = audioDataSize;
+  doc["len"] = audioDataSize * 2;
   String requestBody;
   serializeJson(doc, requestBody);
 
@@ -194,23 +199,44 @@ String speechToText(uint8_t* audioData, size_t audioDataSize) {
 
 // Get response from Baidu Ernie Bot
 String getErnieBotResponse(String prompt) {
-  if (access_token == "") {
-    getAccessToken();
+  if (qianfan_access_token == "") {
+    qianfan_access_token = getAccessToken(qianfan_api_key, qianfan_secret_key);
   }
 
+  // 创建http, 添加访问url和头信息
   HTTPClient http;
-  http.begin(ernie_api_url);
+  http.begin(ernie_api_url + String(qianfan_access_token));
   http.addHeader("Content-Type", "application/json");
 
+  // 创建一个 JSON 文档
   DynamicJsonDocument doc(1024);
-  doc["prompt"] = prompt;
+
+  // 创建 messages 数组
+  JsonArray messages = doc.createNestedArray("messages");
+
+  // 创建 message 对象并添加到 messages 数组
+  JsonObject message = messages.createNestedObject();
+  message["role"] = "user";
+  message["content"] = prompt;
+
+  // 添加其他字段
+  doc["disable_search"] = false;
+  doc["enable_citation"] = false;
+
+  // 将 JSON 数据序列化为字符串
   String requestBody;
   serializeJson(doc, requestBody);
 
-  int httpCode = http.POST(requestBody);
-  String ernieResponse = "";
+  // 打印生成的 JSON 字符串
+  Serial.println(requestBody);
 
+  // 发送http访问请求
+  String ernieResponse = "";
+  int httpCode = http.POST(requestBody);
+
+  // 访问结果的判断
   if (httpCode == HTTP_CODE_OK) {
+    // 获取返回结果并解析
     String response = http.getString();
     DynamicJsonDocument responseDoc(2048);
     deserializeJson(responseDoc, response);
@@ -220,21 +246,24 @@ String getErnieBotResponse(String prompt) {
     Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
 
+  // 结束http访问
   http.end();
+
+  // 返回响应数据
   return ernieResponse;
 }
 
 // Perform text to speech using Baidu TTS API
 String textToSpeech(String text) {
-  if (access_token == "") {
-    getAccessToken();
+  if (baidu_access_token == "") {
+    baidu_access_token = getAccessToken(baidu_api_key, baidu_secret_key);
   }
 
   HTTPClient http;
   http.begin(tts_api_url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + access_token + "&tex=" + text + "&vol=5&per=4";
+  String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + baidu_access_token + "&tex=" + text + "&vol=5&per=4";
 
   int httpCode = http.POST(requestBody);
   String synthesizedAudio = "";
