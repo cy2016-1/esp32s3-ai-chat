@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <base64.h>
 #include <driver/i2s.h>
+#include <Base64_Arturo.h>
 
 // I2S config for MAX98357A
 #define I2S_OUT_PORT I2S_NUM_0
@@ -17,31 +18,33 @@
 #define I2S_IN_DIN 6
 
 // WiFi credentials
-static const char* ssid = "H3C1";
-static const char* password = "bjlg2023";
+const char* ssid = "chging";
+const char* password = "1993@Chg";
 
 // Baidu API credentials
-static const char* baidu_api_key = "mnCVxgi8S8fLfIldPeNUewAq";
-static const char* baidu_secret_key = "x0xcBGyUA7NTxzw7wEJyEz9uqmXMbxTd";
+const char* baidu_api_key = "mnCVxgi8S8fLfIldPeNUewAq";
+const char* baidu_secret_key = "x0xcBGyUA7NTxzw7wEJyEz9uqmXMbxTd";
 
 // Baidu 千帆大模型
-static char* qianfan_api_key = "Lb7o26wf56OZRO1r1ht5qpDV";
-static char* qianfan_secret_key = "YVlGevejLEQOy477sfW1BdC8wzidvET8";
+char* qianfan_api_key = "Lb7o26wf56OZRO1r1ht5qpDV";
+char* qianfan_secret_key = "YVlGevejLEQOy477sfW1BdC8wzidvET8";
 
-static const char* stt_api_url = "https://vop.baidu.com/server_api";                                                                 // 语音识别API
-static const char* ernie_api_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/ernie-lite-8k?access_token=";  // 千帆大模型API
-static const char* tts_api_url = "https://tsn.baidu.com/text2audio";                                                                 // 语音合成API
+const char* stt_api_url = "https://vop.baidu.com/server_api";                                                                 // 语音识别API
+const char* ernie_api_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/ernie-lite-8k?access_token=";  // 千帆大模型API
+const char* tts_api_url = "https://tsn.baidu.com/text2audio";                                                                 // 语音合成API
 
 // Audio recording settings
-static const int sampleRate = 16000;
-static const int bufferSize = 4096;
-static int16_t audioBuffer[bufferSize];
+#define SAMPLE_RATE 16000
+#define RECORD_TIME_SECONDS 5
+#define BUFFER_SIZE (SAMPLE_RATE * RECORD_TIME_SECONDS)
+int16_t audioData[4096];        //i2s audio录音缓存区
+int16_t pcm_data[BUFFER_SIZE];  //一帧录音缓存区
 
 // Function prototypes
 String getAccessToken(const char* api_key, const char* secret_key);
 String speechToText(int16_t* audioData, size_t audioDataSize);
 String getErnieBotResponse(String prompt);
-String textToSpeech(String text);
+char* textToSpeech(String text);
 void playAudio(uint8_t* audioData, size_t audioDataSize);
 
 void setup() {
@@ -58,7 +61,7 @@ void setup() {
   // Initialize I2S for audio output
   i2s_config_t i2s_config_out = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = sampleRate,
+    .sample_rate = SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
     .communication_format = (i2s_comm_format_t)(I2S_COMM_FORMAT_STAND_I2S),
@@ -79,7 +82,7 @@ void setup() {
   // Initialize I2S for audio input
   i2s_config_t i2s_config_in = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = sampleRate,
+    .sample_rate = SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,  // 注意：INMP441 输出 32 位数据
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
@@ -96,16 +99,63 @@ void setup() {
   };
   i2s_driver_install(I2S_IN_PORT, &i2s_config_in, 0, NULL);
   i2s_set_pin(I2S_IN_PORT, &pin_config_in);
+  // esp_err_t err = i2s_zero_dma_buffer(I2S_IN_PORT);
+  // if (err != ESP_OK) {
+  //   Serial.println("Error in initializing dma buffer with 0");
+  // }
+
+  // err = i2s_start(I2S_IN_PORT);
+  // if (err != ESP_OK) {
+  //   Serial.printf("I2S start failed (I2S_IN_PORT): %d\n", err);
+  //   while (true)
+  //     ;
+  // }
 }
 
 void loop() {
+  if (Serial.available() > 0) {
+    // 读取并打印输入的字符
+    int incomingByte = Serial.read();  // 读取输入的字节
+    Serial.println(incomingByte);      // 在串口监视器上打印读取的字节
+  }
+
   // Record audio from INMP441
-  size_t bytesRead = 0;
-  i2s_read(I2S_IN_PORT, audioBuffer, bufferSize, &bytesRead, portMAX_DELAY);
-  Serial.println(bytesRead);
-  if (bytesRead > 0) {
+  // 分配内存
+  // pcm_data = reinterpret_cast<int16_t*>(ps_malloc(BUFFER_SIZE * 2));
+  // if (!pcm_data) {
+  //   Serial.println("Failed to allocate memory for pcm_data");
+  // }
+
+  // 开始循环录音，将录制结果保存在pcm_data中
+  int incomingByte = 0;
+  size_t bytes_read = 0, recordingSize = 0;
+  int8_t start_record = 0;
+  while (1) {
+    if (Serial.available() > 0) {
+      incomingByte = Serial.read();  // 读取输入的字节
+    }
+
+    if (incomingByte == 50) {
+      Serial.printf("start_record: %d\n", start_record);
+      start_record = 1;
+    }
+
+    if (start_record) {
+      esp_err_t result = i2s_read(I2S_IN_PORT, audioData, sizeof(audioData), &bytes_read, portMAX_DELAY);
+      memcpy(pcm_data + recordingSize, audioData, bytes_read);
+      recordingSize += bytes_read / 2;
+    }
+
+    if (incomingByte == 49 || recordingSize >= BUFFER_SIZE) {
+      Serial.printf("record done: %d", incomingByte);
+      break;
+    }
+  }
+
+  Serial.println(recordingSize);
+  if (recordingSize > 0) {
     // Perform speech to text
-    String recognizedText = speechToText(audioBuffer, bufferSize);
+    String recognizedText = speechToText(pcm_data, recordingSize);
     Serial.println("Recognized text: " + recognizedText);
 
     // Get response from Ernie Bot
@@ -113,11 +163,15 @@ void loop() {
     Serial.println("Ernie Bot response: " + ernieResponse);
 
     // Perform text to speech
-    String synthesizedAudio = textToSpeech(ernieResponse);
+    char* synthesizedAudio = textToSpeech(ernieResponse);
 
     // Play audio via MAX98357A
-    playAudio((uint8_t*)synthesizedAudio.c_str(), synthesizedAudio.length());
+    // Serial.printf("synthesizedAudio: %s %d", synthesizedAudio, strlen(synthesizedAudio));
+    // playAudio((uint8_t *)synthesizedAudio, strlen(synthesizedAudio));
   }
+
+  // 释放内存
+  //free(pcm_data);
 
   delay(1000);
 }
@@ -164,7 +218,7 @@ String speechToText(int16_t* audioData, size_t audioDataSize) {
   // Construct JSON request body
   DynamicJsonDocument doc(2048);
   doc["format"] = "pcm";
-  doc["rate"] = sampleRate;
+  doc["rate"] = SAMPLE_RATE;
   doc["channel"] = 1;
   doc["cuid"] = "ESP32-S3";
   doc["token"] = baidu_access_token;
@@ -254,7 +308,7 @@ String getErnieBotResponse(String prompt) {
 }
 
 // Perform text to speech using Baidu TTS API
-String textToSpeech(String text) {
+char* textToSpeech(String text) {
   if (baidu_access_token == "") {
     baidu_access_token = getAccessToken(baidu_api_key, baidu_secret_key);
   }
@@ -263,19 +317,29 @@ String textToSpeech(String text) {
   http.begin(tts_api_url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + baidu_access_token + "&tex=" + text + "&vol=5&per=4";
+  //String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + baidu_access_token + "&tex=" + text + "&vol=5&per=4";
+  String requestBody = "tex=%E4%BD%A0%E6%98%AF%E8%B0%81%EF%BC%8C%E5%8F%AF%E4%BB%A5%E6%98%AF%E8%BF%99%E4%B8%AA%E6%95%85%E4%BA%8B%E5%90%97%EF%BC%8C%E6%98%AF%E7%9A%84%E5%90%97&tok=" + baidu_access_token + "&cuid=aZUku0ho5CwNzwU4XElF01zJOlQPjb8J&ctp=1&lan=zh&spd=5&pit=5&vol=5&per=1&aue=3";
 
+  char* synthesizedAudio = NULL;
   int httpCode = http.POST(requestBody);
-  String synthesizedAudio = "";
-
   if (httpCode == HTTP_CODE_OK) {
-    synthesizedAudio = http.getString();
+    String response = http.getString();
+
+    DynamicJsonDocument responseDoc(51200);
+    deserializeJson(responseDoc, response);
+
+    // 获取音频数据长度
+    size_t binarySize = responseDoc["binary"].as<String>().length();
+    const char* binaryData = responseDoc["binary"].as<String>().c_str();
+    // 将音频数据复制到数组中
+    int decoded_length = Base64_Arturo.decode((char*)pcm_data, (char*)binaryData, binarySize);  // 从response中解码数据到chunk
+    Serial.printf("[synthesizedAudio]%d %d %d\n", binarySize, decoded_length, pcm_data[0]);
   } else {
     Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
 
   http.end();
-  return synthesizedAudio;
+  return (char*)synthesizedAudio;
 }
 
 // Play audio data using MAX98357A
