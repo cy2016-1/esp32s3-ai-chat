@@ -6,13 +6,13 @@
 #include <Base64_Arturo.h>
 
 // I2S config for MAX98357A
-#define I2S_OUT_PORT I2S_NUM_0
+#define I2S_OUT_PORT I2S_NUM_1
 #define I2S_OUT_BCLK 16
 #define I2S_OUT_LRC 17
 #define I2S_OUT_DOUT 15
 
 // INMP441 config
-#define I2S_IN_PORT I2S_NUM_1
+#define I2S_IN_PORT I2S_NUM_0
 #define I2S_IN_BCLK 4
 #define I2S_IN_LRC 5
 #define I2S_IN_DIN 6
@@ -37,7 +37,7 @@ const char* tts_api_url = "https://tsn.baidu.com/text2audio";                   
 #define SAMPLE_RATE 16000
 #define RECORD_TIME_SECONDS 1
 #define BUFFER_SIZE (SAMPLE_RATE * RECORD_TIME_SECONDS)
-int16_t audioData[4096];        //i2s audio录音缓存区
+
 int16_t pcm_data[BUFFER_SIZE];  //一帧录音缓存区
 
 // Function prototypes
@@ -68,7 +68,6 @@ void setup() {
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
     .dma_buf_len = 1024,
-    .use_apll = false
   };
   i2s_pin_config_t pin_config = {
     .bck_io_num = I2S_OUT_BCLK,
@@ -89,7 +88,6 @@ void setup() {
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 8,
     .dma_buf_len = 1024,
-    .use_apll = false
   };
   i2s_pin_config_t pin_config_in = {
     .bck_io_num = I2S_IN_BCLK,
@@ -99,18 +97,20 @@ void setup() {
   };
   i2s_driver_install(I2S_IN_PORT, &i2s_config_in, 0, NULL);
   i2s_set_pin(I2S_IN_PORT, &pin_config_in);
-  // esp_err_t err = i2s_zero_dma_buffer(I2S_IN_PORT);
-  // if (err != ESP_OK) {
-  //   Serial.println("Error in initializing dma buffer with 0");
-  // }
-
-  // err = i2s_start(I2S_IN_PORT);
-  // if (err != ESP_OK) {
-  //   Serial.printf("I2S start failed (I2S_IN_PORT): %d\n", err);
-  //   while (true)
-  //     ;
-  // }
 }
+
+// void loop() {
+//   // put your main code here, to run repeatedly:
+//   size_t bytes_read;
+//   int16_t data[512];
+//   esp_err_t result = i2s_read(I2S_IN_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
+//   for(int32_t i = 0; i < bytes_read/2; i++)
+//   {
+//       Serial.println(data[i]);
+//   }
+//   result = i2s_write(I2S_OUT_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
+//   delay(100);
+// }
 
 void loop() {
   if (Serial.available() > 0) {
@@ -130,6 +130,7 @@ void loop() {
   int incomingByte = 0;
   size_t bytes_read = 0, recordingSize = 0;
   int8_t start_record = 0;
+  int16_t data[512];
   while (1) {
     if (Serial.available() > 0) {
       incomingByte = Serial.read();  // 读取输入的字节
@@ -141,25 +142,28 @@ void loop() {
     }
 
     if (start_record) {
-      esp_err_t result = i2s_read(I2S_IN_PORT, audioData, sizeof(audioData), &bytes_read, portMAX_DELAY);
-      memcpy(pcm_data + recordingSize, audioData, bytes_read);
-      recordingSize += bytes_read / 2;
+      esp_err_t result = i2s_read(I2S_IN_PORT, data, sizeof(data), &bytes_read, portMAX_DELAY);
+      memcpy((uint8_t*)pcm_data + recordingSize, data, bytes_read);
+      recordingSize += bytes_read;
+      Serial.printf("%x recordingSize: %d bytes_read :%d\n", (uint8_t*)pcm_data + recordingSize, recordingSize, bytes_read);
     }
 
-    if (incomingByte == 49 || recordingSize >= BUFFER_SIZE) {
-      Serial.printf("record done: %d", incomingByte);
+    if (incomingByte == 49 || recordingSize >= 2 * BUFFER_SIZE - bytes_read) {
+      Serial.printf("record done: %d", recordingSize);
       break;
     }
+
+    delay(100);
   }
 
   Serial.println(recordingSize);
   if (recordingSize > 0) {
     // Perform speech to text
-    String recognizedText = speechToText(pcm_data, recordingSize);
+    String recognizedText = speechToText((uint8_t*)pcm_data, recordingSize);
     Serial.println("Recognized text: " + recognizedText);
 
     // Get response from Ernie Bot
-    String ernieResponse = getErnieBotResponse("你好，说个排比句，15字以内");
+    String ernieResponse = getErnieBotResponse("你好，说句话，10字以内");
     Serial.println("Ernie Bot response: " + ernieResponse);
 
     // Perform text to speech
@@ -203,7 +207,7 @@ String getAccessToken(const char* api_key, const char* secret_key) {
 }
 
 // Perform speech to text using Baidu STT API
-String speechToText(int16_t* audioData, size_t audioDataSize) {
+String speechToText(uint8_t* audioData, size_t audioDataSize) {
   if (baidu_access_token == "") {
     baidu_access_token = getAccessToken(baidu_api_key, baidu_secret_key);
   }
@@ -212,39 +216,95 @@ String speechToText(int16_t* audioData, size_t audioDataSize) {
   http.begin(stt_api_url);
   http.addHeader("Content-Type", "application/json");
 
-  // Base64 encode audio data
-  String base64AudioData = base64::encode((uint8_t*)audioData, audioDataSize * 2);
-
-  // Construct JSON request body
-  DynamicJsonDocument doc(2048);
-  doc["format"] = "pcm";
-  doc["rate"] = SAMPLE_RATE;
-  doc["channel"] = 1;
-  doc["cuid"] = "ESP32-S3";
-  doc["token"] = baidu_access_token;
-  doc["lan"] = "zh";
-  doc["speech"] = base64AudioData;
-  doc["len"] = audioDataSize * 2;
-  String requestBody;
-  serializeJson(doc, requestBody);
-
-  // Send POST request
-  int httpCode = http.POST(requestBody);
+  int32_t oneshot = (1024 * 8);
+  int32_t divs = audioDataSize / oneshot;
+  int32_t remain = audioDataSize % oneshot;
 
   String recognizedText = "";
 
-  if (httpCode == HTTP_CODE_OK) {
-    String response = http.getString();
-    DynamicJsonDocument responseDoc(2048);
-    deserializeJson(responseDoc, response);
+  // 分段发送
+  for (int32_t i = 0; i < divs; i++) {
 
-    if (responseDoc["err_no"] == 0) {
-      recognizedText = responseDoc["result"][0].as<String>();
+    // Base64 encode audio data
+    String base64AudioData = base64::encode(audioData+i*oneshot, oneshot);
+
+    // Construct JSON request body
+    DynamicJsonDocument doc(12 * 1024);
+    doc["format"] = "pcm";
+    doc["rate"] = SAMPLE_RATE;
+    doc["dev_pid"] = 1537;
+    doc["channel"] = 1;
+    doc["cuid"] = "ESP32-S3";
+    doc["token"] = baidu_access_token;
+    doc["lan"] = "zh";
+    doc["speech"] = base64AudioData;
+    doc["len"] = oneshot;
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    // Serial.println("requestBody:");
+    // Serial.println(requestBody);
+
+    // Send POST request
+    int httpCode = http.POST(requestBody);
+
+    // String recognizedText = "";
+
+    if (httpCode == HTTP_CODE_OK) {
+      String response = http.getString();
+      DynamicJsonDocument responseDoc(2048);
+      deserializeJson(responseDoc, response);
+
+      if (responseDoc["err_no"] == 0) {
+        recognizedText += responseDoc["result"][0].as<String>();
+      } else {
+        Serial.println("Speech recognition error: " + responseDoc["err_msg"].as<String>());
+      }
     } else {
-      Serial.println("Speech recognition error: " + responseDoc["err_msg"].as<String>());
+      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
-  } else {
-    Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  if (remain)
+  {
+    // Base64 encode audio data
+    String base64AudioData = base64::encode(audioData+divs*oneshot, remain);
+
+    // Construct JSON request body
+    DynamicJsonDocument doc(12 * 1024);
+    doc["format"] = "pcm";
+    doc["rate"] = SAMPLE_RATE;
+    doc["dev_pid"] = 1537;
+    doc["channel"] = 1;
+    doc["cuid"] = "ESP32-S3";
+    doc["token"] = baidu_access_token;
+    doc["lan"] = "zh";
+    doc["speech"] = base64AudioData;
+    doc["len"] = remain;
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    // Serial.println("requestBody:");
+    // Serial.println(requestBody);
+
+    // Send POST request
+    int httpCode = http.POST(requestBody);
+
+    // String recognizedText = "";
+
+    if (httpCode == HTTP_CODE_OK) {
+      String response = http.getString();
+      DynamicJsonDocument responseDoc(2048);
+      deserializeJson(responseDoc, response);
+
+      if (responseDoc["err_no"] == 0) {
+        recognizedText += responseDoc["result"][0].as<String>();
+      } else {
+        Serial.println("Speech recognition error: " + responseDoc["err_msg"].as<String>());
+      }
+    } else {
+      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
   }
 
   http.end();
@@ -324,6 +384,7 @@ String urlEncode(String str) {
   return encodedStr;
 }
 
+#define CHUNK_SIZE 1024
 // Perform text to speech using Baidu TTS API
 char* textToSpeech(String text) {
   if (baidu_access_token == "") {
@@ -331,7 +392,6 @@ char* textToSpeech(String text) {
   }
 
   HTTPClient http;
-  http.setTimeout(5000);
   http.begin(tts_api_url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
@@ -341,7 +401,7 @@ char* textToSpeech(String text) {
 
   //String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + baidu_access_token + "&tex=" + text + "&vol=5&per=4";
 
-// 拼接请求体
+  // 拼接请求体
   String requestBody = "tex=" + encodedText + "&tok=" + baidu_access_token + "&cuid=aZUku0ho5CwNzwU4XElF01zJOlQPjb8J&ctp=1&lan=zh&spd=5&pit=5&vol=5&per=1&aue=3";
   Serial.println(requestBody);
 
@@ -351,11 +411,41 @@ char* textToSpeech(String text) {
     String response = http.getString();
     Serial.println("response:");
     Serial.println(response.length());
-    int binarySize = Base64_Arturo.decode((char*)pcm_data, (char*)response.c_str(), response.length());  // 从response中解码数据到chunk
-    Serial.println("pcm_data:");
-    Serial.printf("[binary]%d %s\n", binarySize, pcm_data);
-    DynamicJsonDocument responseDoc(51200);
-    deserializeJson(responseDoc, response);
+//    int binarySize = Base64_Arturo.decode((char*)pcm_data, (char*)response.c_str(), response.length());  // 从response中解码数据到chunk
+    // Serial.println("binarySize:");
+    // Serial.println(binarySize);
+
+    //分段获取PCM音频数据并输出到I2S上
+    int response_len = response.length();
+
+    memcpy((uint8_t *)pcm_data, (uint8_t *)response.c_str(), response_len);
+    for(int j = 0; j < response_len/2; j++)
+    {
+      // uint8_t res1 = chunk[2*j];
+      // uint8_t res2 = chunk[2*j+1];
+      // int16_t res = (res2 << 8) | (res1);
+      int16_t res = pcm_data[j];
+      int16_t s = ((res & 0xFF) << 8) | (res >> 8);
+      Serial.println(s);
+    }
+
+    // for (int i = 0; i < response_len; i += CHUNK_SIZE) {
+    //   int remaining = min(CHUNK_SIZE, response_len);                                       // 计算剩余数据长度
+    //   int16_t chunk[CHUNK_SIZE];                                                              // 创建一个缓冲区来存储读取的数据
+    //   int decoded_length = Base64_Arturo.decode((char*)chunk, (char*)(response.c_str() + i), remaining);  // 从response中解码数据到chunk
+
+    //   Serial.println("decoded_length:");
+    //   Serial.println(decoded_length);
+    //   for(int j = 0; j < decoded_length/2; j++)
+    //   {
+    //     // uint8_t res1 = chunk[2*j];
+    //     // uint8_t res2 = chunk[2*j+1];
+    //     // int16_t res = (res2 << 8) | (res1);
+    //     Serial.println(chunk[j]);
+    //   }
+    // }
+    // DynamicJsonDocument responseDoc(51200);
+    // deserializeJson(responseDoc, response);
 
     // 获取音频数据长度
     // size_t binarySize = responseDoc["binary"].as<String>().length();
