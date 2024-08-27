@@ -4,6 +4,7 @@
 #include <base64.h>
 #include <driver/i2s.h>
 #include <Base64_Arturo.h>
+#include <UrlEncode.h>
 
 // I2S config for MAX98357A
 #define I2S_OUT_PORT I2S_NUM_1
@@ -167,7 +168,8 @@ void loop() {
     Serial.println("Ernie Bot response: " + ernieResponse);
 
     // Perform text to speech
-    char* synthesizedAudio = textToSpeech(ernieResponse);
+    // char* synthesizedAudio = textToSpeech(ernieResponse);
+    tts_get(ernieResponse);
 
     // Play audio via MAX98357A
     // Serial.printf("synthesizedAudio: %s %d", synthesizedAudio, strlen(synthesizedAudio));
@@ -226,7 +228,7 @@ String speechToText(uint8_t* audioData, size_t audioDataSize) {
   for (int32_t i = 0; i < divs; i++) {
 
     // Base64 encode audio data
-    String base64AudioData = base64::encode(audioData+i*oneshot, oneshot);
+    String base64AudioData = base64::encode(audioData + i * oneshot, oneshot);
 
     // Construct JSON request body
     DynamicJsonDocument doc(12 * 1024);
@@ -265,10 +267,9 @@ String speechToText(uint8_t* audioData, size_t audioDataSize) {
     }
   }
 
-  if (remain)
-  {
+  if (remain) {
     // Base64 encode audio data
-    String base64AudioData = base64::encode(audioData+divs*oneshot, remain);
+    String base64AudioData = base64::encode(audioData + divs * oneshot, remain);
 
     // Construct JSON request body
     DynamicJsonDocument doc(12 * 1024);
@@ -369,21 +370,6 @@ String getErnieBotResponse(String prompt) {
   return ernieResponse;
 }
 
-String urlEncode(String str) {
-  String encodedStr = "";
-  for (size_t i = 0; i < str.length(); i++) {
-    if (isAlphaNumeric(str[i])) {
-      encodedStr += str[i];
-    } else {
-      encodedStr += '%';
-      char hex[4];
-      sprintf(hex, "%02X", (uint8_t)str[i]);
-      encodedStr += hex;
-    }
-  }
-  return encodedStr;
-}
-
 #define CHUNK_SIZE 1024
 // Perform text to speech using Baidu TTS API
 char* textToSpeech(String text) {
@@ -396,7 +382,7 @@ char* textToSpeech(String text) {
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   // 进行 URL 编码
-  String encodedText = urlEncode(text);
+  String encodedText = urlEncode(urlEncode(text));
   Serial.println(encodedText);
 
   //String requestBody = "cuid=ESP32-S3&lan=zh&ctp=1&tok=" + baidu_access_token + "&tex=" + text + "&vol=5&per=4";
@@ -411,22 +397,22 @@ char* textToSpeech(String text) {
     String response = http.getString();
     Serial.println("response:");
     Serial.println(response.length());
-//    int binarySize = Base64_Arturo.decode((char*)pcm_data, (char*)response.c_str(), response.length());  // 从response中解码数据到chunk
+
+    //    int binarySize = Base64_Arturo.decode((char*)pcm_data, (char*)response.c_str(), response.length());  // 从response中解码数据到chunk
     // Serial.println("binarySize:");
     // Serial.println(binarySize);
 
     //分段获取PCM音频数据并输出到I2S上
     int response_len = response.length();
 
-    memcpy((uint8_t *)pcm_data, (uint8_t *)response.c_str(), response_len);
-    for(int j = 0; j < response_len/2; j++)
-    {
+    memcpy((uint8_t*)pcm_data, (uint8_t*)response.c_str(), response_len);
+    for (int j = 0; j < response_len / 2; j++) {
       // uint8_t res1 = chunk[2*j];
       // uint8_t res2 = chunk[2*j+1];
       // int16_t res = (res2 << 8) | (res1);
       int16_t res = pcm_data[j];
       int16_t s = ((res & 0xFF) << 8) | (res >> 8);
-      Serial.println(s);
+      Serial.println(res);
     }
 
     // for (int i = 0; i < response_len; i += CHUNK_SIZE) {
@@ -459,6 +445,89 @@ char* textToSpeech(String text) {
 
   http.end();
   return (char*)synthesizedAudio;
+}
+
+const int PER = 4;
+const int SPD = 5;
+const int PIT = 5;
+const int VOL = 5;
+const int AUE = 6;
+
+void tts_get(String text) {
+  if (baidu_access_token == "") {
+    baidu_access_token = getAccessToken(baidu_api_key, baidu_secret_key);
+  }
+
+  // 进行 URL 编码
+  String encodedText = urlEncode(urlEncode(text));
+
+  const char* TTS_URL = "https://tsn.baidu.com/text2audio";
+  String url = TTS_URL;
+
+  const char* headerKeys[] = { "Content-Type", "Content-Length" };
+  // 5、修改百度语音助手的token
+  url += "?tok=" + baidu_access_token;
+  url += "&tex=" + encodedText;
+  url += "&per=" + String(PER);
+  url += "&spd=" + String(SPD);
+  url += "&pit=" + String(PIT);
+  url += "&vol=" + String(VOL);
+  url += "&aue=" + String(AUE);
+  url += "&cuid=esp32s3";
+  url += "&lan=zh";
+  url += "&ctp=1";
+
+  HTTPClient http;
+
+  Serial.print("URL: ");
+  Serial.println(url);
+
+  http.begin(url);
+  http.collectHeaders(headerKeys, 2);
+  int httpResponseCode = http.GET();
+  if (httpResponseCode > 0) {
+    if (httpResponseCode == HTTP_CODE_OK) {
+      Serial.print("Content-Type = ");
+      Serial.println(http.header("Content-Type"));
+      String contentType = http.header("Content-Type");
+      Serial.println(contentType);
+      if (contentType.startsWith("audio")) {
+        Serial.println("合成成功，返回的是音频文件");
+        // 处理音频文件，保存到SD卡或者播放
+        // 读取音频数据并写入文件
+        WiFiClient* stream = http.getStreamPtr();
+        // 4. 读取数据并写入文件
+        int16_t buffer[512];  // 缓冲区大小可以调整
+        size_t bytesRead;
+        size_t bytes_written;
+        int total = 0;
+        while (http.connected() && (bytesRead = stream->readBytes((uint8_t *)buffer, sizeof(buffer))) > 0) {
+          // for (int j = 0; j < bytesRead / 2; j++) {
+          //   // uint8_t res1 = chunk[2*j];
+          //   // uint8_t res2 = chunk[2*j+1];
+          //   // int16_t res = (res2 << 8) | (res1);
+          //   Serial.println(buffer[j]);
+          // }
+          // total += bytesRead;
+          i2s_write(I2S_OUT_PORT, buffer, sizeof(buffer), &bytes_written, portMAX_DELAY);
+        }
+        Serial.println("total:");
+        Serial.println(total);
+      } else if (contentType.equals("application/json")) {
+        Serial.println("合成出现错误，返回的是JSON文本");
+        // 处理错误信息，根据需要进行相应的处理
+      } else {
+        Serial.println("未知的Content-Type");
+        // 可以添加相应的处理逻辑
+      }
+    } else {
+      Serial.println("Failed to receive audio file");
+    }
+  } else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  http.end();
 }
 
 // Play audio data using MAX98357A
