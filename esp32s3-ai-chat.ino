@@ -8,9 +8,9 @@
 
 // I2S config for MAX98357A
 #define I2S_OUT_PORT I2S_NUM_1
-#define I2S_OUT_BCLK 16
-#define I2S_OUT_LRC 17
-#define I2S_OUT_DOUT 15
+#define I2S_OUT_BCLK 15
+#define I2S_OUT_LRC 16
+#define I2S_OUT_DOUT 7
 
 // INMP441 config
 #define I2S_IN_PORT I2S_NUM_0
@@ -100,88 +100,84 @@ void setup() {
   i2s_set_pin(I2S_IN_PORT, &pin_config_in);
 }
 
-// void loop() {
-//   // put your main code here, to run repeatedly:
-//   size_t bytes_read;
-//   int16_t data[512];
-//   esp_err_t result = i2s_read(I2S_IN_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
-//   for(int32_t i = 0; i < bytes_read/2; i++)
-//   {
-//       Serial.println(data[i]);
-//   }
-//   result = i2s_write(I2S_OUT_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
-//   delay(100);
-// }
+void loop() {
+  // put your main code here, to run repeatedly:
+  size_t bytes_read;
+  int16_t data[512];
+  esp_err_t result = i2s_read(I2S_IN_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
+  result = i2s_write(I2S_OUT_PORT, &data, sizeof(data), &bytes_read, portMAX_DELAY);
+}
+
 uint8_t* pcm_data;
 
-void loop() {
-  if (Serial.available() > 0) {
-    // 读取并打印输入的字符
-    int incomingByte = Serial.read();  // 读取输入的字节
-    Serial.println(incomingByte);      // 在串口监视器上打印读取的字节
-  }
+// void loop() {
+//   if (Serial.available() > 0) {
+//     // 读取并打印输入的字符
+//     int incomingByte = Serial.read();  // 读取输入的字节
+//     Serial.println(incomingByte);      // 在串口监视器上打印读取的字节
+//   }
 
-  // Record audio from INMP441
-  // 分配内存
-  pcm_data = (uint8_t*)ps_malloc(BUFFER_SIZE);
-  if (!pcm_data) {
-    Serial.println("Failed to allocate memory for pcm_data");
-    return;
-  }
+//   // Record audio from INMP441
+//   // 分配内存
+//   pcm_data = (uint8_t*)ps_malloc(BUFFER_SIZE);
+//   if (!pcm_data) {
+//     Serial.println("Failed to allocate memory for pcm_data");
+//     return;
+//   }
 
-  // 开始循环录音，将录制结果保存在pcm_data中
-  int incomingByte = 0;
-  size_t bytes_read = 0, recordingSize = 0;
-  int8_t start_record = 0;
-  int16_t data[512];
-  while (1) {
-    if (Serial.available() > 0) {
-      incomingByte = Serial.read();  // 读取输入的字节
-    }
+//   // 开始循环录音，将录制结果保存在pcm_data中
+//   int incomingByte = 0;
+//   size_t bytes_read = 0, recordingSize = 0;
+//   int8_t start_record = 0;
+//   int16_t data[512];
+//   while (1) {
+//     if (Serial.available() > 0) {
+//       incomingByte = Serial.read();  // 读取输入的字节
+//     }
 
-    if (incomingByte == 50) {
-      Serial.printf("start_record: %d\n", start_record);
-      start_record = 1;
-    }
+//     if (incomingByte == 50) {
+//       Serial.printf("start_record: %d\n", start_record);
+//       start_record = 1;
+//     }
 
-    if (start_record) {
-      esp_err_t result = i2s_read(I2S_IN_PORT, data, sizeof(data), &bytes_read, portMAX_DELAY);
-      memcpy((uint8_t*)pcm_data + recordingSize, data, bytes_read);
-      recordingSize += bytes_read;
-      Serial.printf("%x recordingSize: %d bytes_read :%d\n", (uint8_t*)pcm_data + recordingSize, recordingSize, bytes_read);
-    }
+//     if (start_record) {
+//       esp_err_t result = i2s_read(I2S_IN_PORT, data, sizeof(data), &bytes_read, portMAX_DELAY);
+//       memcpy((uint8_t*)pcm_data + recordingSize, data, bytes_read);
+//       recordingSize += bytes_read;
+//       Serial.printf("%x recordingSize: %d bytes_read :%d\n", (uint8_t*)pcm_data + recordingSize, recordingSize, bytes_read);
+//     }
 
-    if (incomingByte == 49 || recordingSize >= BUFFER_SIZE - bytes_read) {
-      Serial.printf("record done: %d", recordingSize);
-      break;
-    }
-  }
+//     if (incomingByte == 49 || recordingSize >= BUFFER_SIZE - bytes_read) {
+//       Serial.printf("record done: %d", recordingSize);
+//       break;
+//     }
+//   }
 
-  Serial.println(recordingSize);
-  if (recordingSize > 0) {
-    // Perform speech to text
-    // String recognizedText = speechToText((uint8_t*)pcm_data, recordingSize);
-    // Serial.println("Recognized text: " + recognizedText);
-    stt_send((uint8_t*)pcm_data, recordingSize);
+//   Serial.println(recordingSize);
+//   if (recordingSize > 0) {
+//     // Perform speech to text
+//     // String recognizedText = speechToText((uint8_t*)pcm_data, recordingSize);
+//     // Serial.println("Recognized text: " + recognizedText);
+//     stt_send((uint8_t*)pcm_data, recordingSize);
 
-    // Get response from Ernie Bot
-    String ernieResponse = getErnieBotResponse("你好，说句话，10字以内");
-    Serial.println("Ernie Bot response: " + ernieResponse);
+//     // Get response from Ernie Bot
+//     String ernieResponse = getErnieBotResponse("你好，说句话，10字以内");
+//     Serial.println("Ernie Bot response: " + ernieResponse);
 
-    // Perform text to speech
-    // char* synthesizedAudio = textToSpeech(ernieResponse);
-    tts_send(ernieResponse);
+//     // Perform text to speech
+//     // char* synthesizedAudio = textToSpeech(ernieResponse);
+//     tts_send(ernieResponse);
 
-    // Play audio via MAX98357A
-    // Serial.printf("synthesizedAudio: %s %d", synthesizedAudio, strlen(synthesizedAudio));
-    // playAudio((uint8_t *)synthesizedAudio, strlen(synthesizedAudio));
-  }
+//     // Play audio via MAX98357A
+//     // Serial.printf("synthesizedAudio: %s %d", synthesizedAudio, strlen(synthesizedAudio));
+//     // playAudio((uint8_t *)synthesizedAudio, strlen(synthesizedAudio));
+//   }
 
-  // 释放内存
-  free(pcm_data);
+//   // 释放内存
+//   free(pcm_data);
 
-  delay(1000);
-}
+//   delay(1000);
+// }
 
 String baidu_access_token = "";
 String qianfan_access_token = "";
