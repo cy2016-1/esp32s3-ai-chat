@@ -1,4 +1,4 @@
-#include <xiao_ming_tong_xue_inferencing.h>
+#include <wakeup_detect_houguotongxue_inferencing.h>
 
 /* Edge Impulse Arduino examples
  * Copyright (c) 2022 EdgeImpulse Inc.
