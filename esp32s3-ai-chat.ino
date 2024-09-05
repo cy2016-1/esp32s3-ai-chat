@@ -1,4 +1,5 @@
-#include <xiao_ming_tong_xue_inferencing.h>
+#include <wakeup_detect_houguotongxue_inferencing.h>
+
 
 #include <Base64_Arturo.h>
 
@@ -171,7 +172,7 @@ void loop() {
     }
   }
   // Display inference result
-  if (pred_index == 2) {
+  if (pred_index == 0) {
     digitalWrite(LED_BUILT_IN, LOW);  //Turn on
 
     Serial.println("playAudio_Zai");
@@ -551,7 +552,7 @@ void baiduTTS_Send(String access_token, String text) {
   const int PER = 1;
   const int SPD = 5;
   const int PIT = 5;
-  const int VOL = 5;
+  const int VOL = 10;
   const int AUE = 6;
 
   // 进行 URL 编码
@@ -590,9 +591,12 @@ void baiduTTS_Send(String access_token, String text) {
         Serial.println("合成成功，返回的是音频文件");
 
         // 获取返回的音频数据流
-        WiFiClient* stream = http.getStreamPtr();
+        Stream* stream = http.getStreamPtr();
         uint8_t buffer[1024];
         size_t bytesRead = 0;
+
+        // 设置timeout为100ms 避免最后出现杂音
+        stream->setTimeout(100);
 
         while (http.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
           // 音频输出
@@ -637,6 +641,7 @@ void clearAudio(void) {
   // 清空I2S DMA缓冲区
   delay(200);
   i2s_zero_dma_buffer(I2S_OUT_PORT);
+  Serial.print("clearAudio");
 }
 
 // Play zai audio data using MAX98357A
