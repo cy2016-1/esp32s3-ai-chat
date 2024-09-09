@@ -1,14 +1,11 @@
-#include <wakeup_detect_houguotongxue_inferencing.h>
-
-
-#include <Base64_Arturo.h>
+#include <wakeup_detect_houguoxiong_inferencing.h>
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <base64.h>
 #include <driver/i2s.h>
 #include <UrlEncode.h>
+#include <base64.hpp>
 
 // I2S config for MAX98357A
 #define I2S_OUT_PORT I2S_NUM_1
@@ -42,7 +39,7 @@ char* qianfan_secret_key = "YVlGevejLEQOy477sfW1BdC8wzidvET8";
 #define BUFFER_SIZE (SAMPLE_RATE * RECORD_TIME_SECONDS)
 
 // 唤醒词阈值，阈值越大，要求识别的唤醒词更精准
-#define PRED_VALUE_THRESHOLD 0.9
+#define PRED_VALUE_THRESHOLD 0.8
 
 /** Audio buffers, pointers and selectors */
 typedef struct {
@@ -153,7 +150,7 @@ void loop() {
     return;
   }
 
-  int pred_index = 0;                       // Initialize pred_index
+  int pred_index = -1;                      // Initialize pred_index
   float pred_value = PRED_VALUE_THRESHOLD;  // Initialize pred_value
 
   // print the predictions
@@ -166,9 +163,8 @@ void loop() {
     ei_printf_float(result.classification[ix].value);
     ei_printf("\n");
 
-    if (result.classification[ix].value > pred_value) {
-      pred_index = ix;
-      pred_value = result.classification[ix].value;
+    if (result.classification[0].value > pred_value) {
+      pred_index = 0;
     }
   }
   // Display inference result
@@ -350,7 +346,7 @@ void mainChat(void* arg) {
         }
         Serial.printf("noVoiceCur :%d noVoicePre :%d noVoiceTotal :%d\n", noVoiceCur, noVoicePre, noVoiceTotal);
 
-        if (noVoiceTotal > 1500) {
+        if (noVoiceTotal > 1000) {
           recording = false;
         }
 
@@ -416,7 +412,15 @@ String baiduSTT_Send(String access_token, uint8_t* audioData, int audioDataSize)
     return recognizedText;
   }
 
-  //json包大小，由于需要将audioData数据进行Base64的编码，数据量会增大1/3
+  // audio数据包许愿哦进行Base64编码，数据量会增大1/3
+  int audio_data_len = audioDataSize * sizeof(char) * 1.4;
+  unsigned char* audioDataBase64 = (unsigned char*)ps_malloc(audio_data_len);
+  if (!audioDataBase64) {
+    Serial.println("Failed to allocate memory for audioDataBase64");
+    return recognizedText;
+  }
+
+  // json包大小，由于需要将audioData数据进行Base64的编码，数据量会增大1/3
   int data_json_len = audioDataSize * sizeof(char) * 1.4;
   char* data_json = (char*)ps_malloc(data_json_len);
   if (!data_json) {
@@ -425,7 +429,7 @@ String baiduSTT_Send(String access_token, uint8_t* audioData, int audioDataSize)
   }
 
   // Base64 encode audio data
-  String base64AudioData = base64::encode(audioData, audioDataSize);
+  encode_base64(audioData, audioDataSize, audioDataBase64);
 
   memset(data_json, '\0', data_json_len);
   strcat(data_json, "{");
@@ -439,7 +443,7 @@ String baiduSTT_Send(String access_token, uint8_t* audioData, int audioDataSize)
   strcat(data_json, "\",");
   sprintf(data_json + strlen(data_json), "\"len\":%d,", audioDataSize);
   strcat(data_json, "\"speech\":\"");
-  strcat(data_json, base64AudioData.c_str());
+  strcat(data_json, (const char*)audioDataBase64);
   strcat(data_json, "\"");
   strcat(data_json, "}");
 
@@ -465,6 +469,11 @@ String baiduSTT_Send(String access_token, uint8_t* audioData, int audioDataSize)
     Serial.printf("[HTTP] POST failed, error: %s\n", http_client.errorToString(httpCode).c_str());
   }
 
+  // 释放内存
+  if (audioDataBase64) {
+    free(audioDataBase64);
+  }
+
   if (data_json) {
     free(data_json);
   }
@@ -480,11 +489,18 @@ String baiduErnieBot_Get(String access_token, String prompt) {
 
   if (access_token == "") {
     Serial.println("access_token is null");
+    ernieResponse = "获取access token失败";
     return ernieResponse;
   }
 
   if (prompt.length() == 0)
+  {
+    ernieResponse = "识别出错了";
     return ernieResponse;
+  }
+
+  // 角色设定
+  prompt += "你是一个语音助手角色进行回答下面的问题，并且要求在50个字以内。";
 
   // 创建http, 添加访问url和头信息
   HTTPClient http;
@@ -496,7 +512,7 @@ String baiduErnieBot_Get(String access_token, String prompt) {
   http.addHeader("Content-Type", "application/json");
 
   // 创建一个 JSON 文档
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
 
   // 创建 messages 数组
   JsonArray messages = doc.createNestedArray("messages");
@@ -591,7 +607,7 @@ void baiduTTS_Send(String access_token, String text) {
 
         // 获取返回的音频数据流
         Stream* stream = http.getStreamPtr();
-        uint8_t buffer[1024];
+        uint8_t buffer[2048];
         size_t bytesRead = 0;
 
         // 设置timeout为100ms 避免最后出现杂音
@@ -655,7 +671,7 @@ void playAudio_Zai(void) {
   }
 
   // base64 解析
-  int decoded_length = Base64_Arturo.decode((char*)decode_data, (char*)zai, strlen(zai));
+  int decoded_length = decode_base64((unsigned char*)zai, (unsigned char*)decode_data);
 
   // 播放
   playAudio(decode_data, decoded_length);
