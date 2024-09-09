@@ -549,28 +549,27 @@ void baiduTTS_Send(String access_token, String text) {
     return;
   }
 
-  const int PER = 1;
-  const int SPD = 5;
-  const int PIT = 5;
-  const int VOL = 10;
-  const int AUE = 6;
+  const int per = 1;
+  const int spd = 5;
+  const int pit = 5;
+  const int vol = 10;
+  const int aue = 6;
 
   // 进行 URL 编码
   String encodedText = urlEncode(urlEncode(text));
 
   // URL http请求数据封装
-  const char* TTS_URL = "https://tsn.baidu.com/text2audio";
-  String url = TTS_URL;
+  String url = "https://tsn.baidu.com/text2audio";
 
-  const char* headerKeys[] = { "Content-Type", "Content-Length" };
+  const char* header[] = { "Content-Type", "Content-Length" };
 
   url += "?tok=" + access_token;
   url += "&tex=" + encodedText;
-  url += "&per=" + String(PER);
-  url += "&spd=" + String(SPD);
-  url += "&pit=" + String(PIT);
-  url += "&vol=" + String(VOL);
-  url += "&aue=" + String(AUE);
+  url += "&per=" + String(per);
+  url += "&spd=" + String(spd);
+  url += "&pit=" + String(pit);
+  url += "&vol=" + String(vol);
+  url += "&aue=" + String(aue);
   url += "&cuid=esp32s3";
   url += "&lan=zh";
   url += "&ctp=1";
@@ -579,7 +578,7 @@ void baiduTTS_Send(String access_token, String text) {
   HTTPClient http;
 
   http.begin(url);
-  http.collectHeaders(headerKeys, 2);
+  http.collectHeaders(header, 2);
 
   // http请求
   int httpResponseCode = http.GET();
@@ -588,7 +587,7 @@ void baiduTTS_Send(String access_token, String text) {
       String contentType = http.header("Content-Type");
       Serial.println(contentType);
       if (contentType.startsWith("audio")) {
-        Serial.println("合成成功，返回的是音频文件");
+        Serial.println("合成成功");
 
         // 获取返回的音频数据流
         Stream* stream = http.getStreamPtr();
@@ -614,7 +613,7 @@ void baiduTTS_Send(String access_token, String text) {
         // 清空I2S DMA缓冲区
         clearAudio();
       } else if (contentType.equals("application/json")) {
-        Serial.println("合成出现错误，返回的是JSON文本");
+        Serial.println("合成出现错误");
       } else {
         Serial.println("未知的Content-Type");
       }
