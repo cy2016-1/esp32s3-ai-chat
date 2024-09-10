@@ -19,19 +19,17 @@
 #define I2S_IN_LRC 5
 #define I2S_IN_DIN 6
 
-#define LED_BUILT_IN 21
-
 // WiFi credentials
-const char* ssid = "chging";
-const char* password = "1993@Chg";
+const char* ssid = "";
+const char* password = "";
 
 // Baidu API credentials
-const char* baidu_api_key = "mnCVxgi8S8fLfIldPeNUewAq";
-const char* baidu_secret_key = "x0xcBGyUA7NTxzw7wEJyEz9uqmXMbxTd";
+const char* baidu_api_key = "";
+const char* baidu_secret_key = "";
 
 // Baidu 千帆大模型
-char* qianfan_api_key = "Lb7o26wf56OZRO1r1ht5qpDV";
-char* qianfan_secret_key = "YVlGevejLEQOy477sfW1BdC8wzidvET8";
+char* qianfan_api_key = "";
+char* qianfan_secret_key = "";
 
 // Audio recording settings
 #define SAMPLE_RATE 16000
@@ -56,7 +54,12 @@ static bool debug_nn = false;  // Set this to true to see e.g. features generate
 static bool record_status = true;
 
 void setup() {
+  // 设置串口波特率
   Serial.begin(115200);
+
+  // 设置LED输出模式，并初始化设置为低
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);  //Turn off
 
   // Connect to WiFi
   WiFi.begin(ssid, password);
@@ -169,17 +172,14 @@ void loop() {
   }
   // Display inference result
   if (pred_index == 0) {
-    digitalWrite(LED_BUILT_IN, LOW);  //Turn on
+    digitalWrite(LED_BUILTIN, HIGH);  //Turn on
 
     Serial.println("playAudio_Zai");
 
     playAudio_Zai();
 
     record_status = false;
-  } else {
-    digitalWrite(LED_BUILT_IN, HIGH);  //Turn off
   }
-
 
 #if EI_CLASSIFIER_HAS_ANOMALY == 1
   ei_printf("    anomaly score: ");
@@ -316,7 +316,7 @@ void mainChat(void* arg) {
       // 开始循环录音，将录制结果保存在pcm_data中
       size_t bytes_read = 0, recordingSize = 0, ttsSize = 0;
       int16_t data[512];
-      size_t noVoicePre = 0, noVoiceCur = 0, noVoiceTotal = 0;
+      size_t noVoicePre = 0, noVoiceCur = 0, noVoiceTotal = 0, VoiceCnt = 0;
       bool recording = true;
 
       while (1) {
@@ -343,6 +343,7 @@ void mainChat(void* arg) {
           noVoiceTotal += noVoiceCur - noVoicePre;
         } else {
           noVoiceTotal = 0;
+          VoiceCnt += 1;
         }
         Serial.printf("noVoiceCur :%d noVoicePre :%d noVoiceTotal :%d\n", noVoiceCur, noVoicePre, noVoiceTotal);
 
@@ -352,11 +353,25 @@ void mainChat(void* arg) {
 
         if (!recording || (recordingSize >= BUFFER_SIZE - bytes_read)) {
           Serial.printf("record done: %d", recordingSize);
+
           break;
         }
       }
 
+      // 设置唤醒录音状态为true，此后可以唤醒
       record_status = true;
+
+      // 此时一直没有说话，则退出被唤醒状态
+      if (VoiceCnt == 0) {
+        digitalWrite(LED_BUILTIN, LOW);  //Turn off
+
+        recordingSize = 0;
+
+        // 释放内存
+        free(pcm_data);
+
+        continue;
+      }
 
       if (recordingSize > 0) {
         // 音频转文本（语音识别API访问）
@@ -375,8 +390,11 @@ void mainChat(void* arg) {
 
       // 释放内存
       free(pcm_data);
+
+      // 设置唤醒录音状态为false，此后继续录音对话
+      record_status = false;
     }
-    delay(100);
+    delay(10);
   }
 }
 
@@ -493,14 +511,13 @@ String baiduErnieBot_Get(String access_token, String prompt) {
     return ernieResponse;
   }
 
-  if (prompt.length() == 0)
-  {
+  if (prompt.length() == 0) {
     ernieResponse = "识别出错了";
     return ernieResponse;
   }
 
   // 角色设定
-  prompt += "你是一个语音助手角色进行回答下面的问题，并且要求在50个字以内。";
+  prompt += "你是一个语音助手，类似朋友的角色进行回答下面的问题，并且要求最多20个字简短的回答。";
 
   // 创建http, 添加访问url和头信息
   HTTPClient http;
@@ -607,23 +624,16 @@ void baiduTTS_Send(String access_token, String text) {
 
         // 获取返回的音频数据流
         Stream* stream = http.getStreamPtr();
-        uint8_t buffer[2048];
+        uint8_t buffer[512];
         size_t bytesRead = 0;
 
-        // 设置timeout为100ms 避免最后出现杂音
-        stream->setTimeout(100);
+        // 设置timeout为200ms 避免最后出现杂音
+        stream->setTimeout(200);
 
         while (http.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
           // 音频输出
           playAudio(buffer, bytesRead);
           delay(1);
-
-          if (!record_status) {
-            // 清空I2S DMA缓冲区
-            clearAudio();
-
-            return;
-          }
         }
 
         // 清空I2S DMA缓冲区
@@ -654,7 +664,6 @@ void playAudio(uint8_t* audioData, size_t audioDataSize) {
 
 void clearAudio(void) {
   // 清空I2S DMA缓冲区
-  delay(200);
   i2s_zero_dma_buffer(I2S_OUT_PORT);
   Serial.print("clearAudio");
 }
@@ -675,6 +684,9 @@ void playAudio_Zai(void) {
 
   // 播放
   playAudio(decode_data, decoded_length);
+
+  // delay 200ms
+  delay(200);
 
   // 清空I2S DMA缓冲区
   clearAudio();
